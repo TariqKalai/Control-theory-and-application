@@ -119,7 +119,7 @@ def PID_RT(SP, PV, Man, MVMan, MVFF, Kc, Ti, Td, alpha, Ts, MVMin, MVMax, MV, MV
 
 ## pas normal j comprend pas ce qu il se passe MVFF ne change pas grand chose, mais MVMan n est pas respecté? 
     if Man[-1] == True :
-        if ManFF :
+        if ManFF[-1] :
             MVI[-1] = MVMan[-1] - MVP[-1] - MVD[-1]
         else :
             MVI[-1] = MVMan[-1] - MVP[-1] - MVD[-1] - MVFF[-1]
@@ -235,43 +235,35 @@ def Margin_error(Process: Process):
     gain_db = 20 * np.log10(gain_linear)
     phase = np.degrees(np.unwrap(np.angle(bode_result)))
 
-    # Calcul de l'index ou se trouve la phase de 180 dans la list phase
     idx_180 = np.where(np.diff(np.sign(phase + 180)))[0]
     
-    # Calcul de l'index ou se trouve le gain de 1 dans la list gain_db
     idx_0dB = np.where(np.diff(np.sign(gain_linear - 1)))[0]
 
     fig, (ax_mag, ax_phase) = plt.subplots(2, 1, figsize=(18, 12), sharex=True)
 
-    # --- Graphique du Gain ---
     ax_mag.semilogx(omega, gain_db, color='blue')
     ax_mag.axhline(0, color='black', linestyle='--', lw=1)
     
     if len(idx_180) > 0:
         w_180 = omega[idx_180[0]]
         gm_val = -gain_db[idx_180[0]] 
-        # La marge est la distance entre la courbe et 0dB
-        # TRACÉ DE LA MARGE DE GAIN : Verticale de la courbe vers 0dB à w_180
         ax_mag.annotate('', xy=(w_180, 0), xytext=(w_180, gain_db[idx_180[0]]),
                         arrowprops=dict(arrowstyle='<->', color='green', lw=2))
-        ax_mag.text(w_180, gain_db[idx_180[0]]/2, f' MG: {gm_val:.1f} dB', color='green', fontweight='bold')
+        ax_mag.text(w_180, gain_db[idx_180[0]]/2, f' gm: {gm_val:.1f} dB', color='green', fontweight='bold')
     
-    # --- Graphique de la Phase ---
     ax_phase.semilogx(omega, phase, color='orange')
     ax_phase.axhline(-180, color='black', linestyle='--', lw=1)
     
     if len(idx_0dB) > 0:
         w_0dB = omega[idx_0dB[0]]
         pm_val = phase[idx_0dB[0]] + 180
-        # TRACÉ DE LA MARGE DE PHASE : Verticale de la courbe vers -180° à w_0dB
         ax_phase.annotate('', xy=(w_0dB, -180), xytext=(w_0dB, phase[idx_0dB[0]]),
                           arrowprops=dict(arrowstyle='<->', color='red', lw=2))
-        ax_phase.text(w_0dB, (phase[idx_0dB[0]] - 180)/2, f' MP: {pm_val:.1f}°', color='red', fontweight='bold')
+        ax_phase.text(w_0dB, (phase[idx_0dB[0]] - 180)/2, f' pm: {pm_val:.1f}°', color='red', fontweight='bold')
     else:
         pm_val = np.inf
         # ax_phase.text(0.1, -10, "Marge de Phase Infinie (Gain < 0dB)", color='red', transform=ax_phase.transAxes)
 
-    # Ajustement des axes pour la lisibilité
     ax_phase.set_ylim([-270, 0]) 
     ax_mag.grid(True, which="both")
     ax_phase.grid(True, which="both")
