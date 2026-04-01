@@ -30,7 +30,7 @@ def LL_RT(MV,Kp,Tlead, Tlag, Ts , PV , PVInit=0,method='EBD'):
     
     
     K = Ts/Tlag
-    if len(PV) == 0:
+    if len(PV) == 0 :
         PV.append(PVInit)
     else: # MV[k+1] is MV[-1] and MV[k] is MV[-2]
         if method == 'EBD':
@@ -41,15 +41,12 @@ def LL_RT(MV,Kp,Tlead, Tlag, Ts , PV , PVInit=0,method='EBD'):
             PV.append((1-K)*PV[-1] + K*Kp* ((Tlead/Ts)*MV[-1] + (1- (Tlead/Ts))*MV[-2]))
 
 
-        # elif method == 'TRAP':
-        #     PV.append((1/(2*Tlag+Ts))*((2*Tlag-Ts)*PV[-1] + Kp*Ts*(MV[-1] + MV[-2])))      
+        elif method == 'TRAP':
+            PV.append(PV[-1]*((2-K)/(2+K)) + ((Kp*K)/(2+K)) * ((2*(Tlead/Ts)+1)*MV[-1] - 2*(Tlead/Ts)*MV[-2] + MV[-2] ))   
 
-
-        else:
+        else: #default : EBD
             PV.append((1/(1+K))*PV[-1] + (K*Kp/(1+K))*(((1+ (Tlead/Ts) )*MV[-1] )- ((Tlead/Ts)*MV[-2])) )
    
-
-
 
 def PID_RT(SP, PV, Man, MVMan, MVFF, Kc, Ti, Td, alpha, Ts, MVMin, MVMax, MV, MVP, MVI, MVD, E , ManFF = False, PVinit=0, method="EBD"):
 
@@ -102,7 +99,6 @@ def PID_RT(SP, PV, Man, MVMan, MVFF, Kc, Ti, Td, alpha, Ts, MVMin, MVMax, MV, MV
     else:
         MVI.append(MVI[-1] + Kc*(Ts/Ti)*E[-1])
 
-    
 
     # Partie MV derivée
     TFD = Td * alpha
@@ -119,7 +115,7 @@ def PID_RT(SP, PV, Man, MVMan, MVFF, Kc, Ti, Td, alpha, Ts, MVMin, MVMax, MV, MV
 
 ## pas normal j comprend pas ce qu il se passe MVFF ne change pas grand chose, mais MVMan n est pas respecté? 
     if Man[-1] == True :
-        if ManFF[-1] :
+        if ManFF :
             MVI[-1] = MVMan[-1] - MVP[-1] - MVD[-1]
         else :
             MVI[-1] = MVMan[-1] - MVP[-1] - MVD[-1] - MVFF[-1]
@@ -159,9 +155,9 @@ def IMC_Tuning(Kp, gamma, theta, T1, T2=0, order=2 ):
     return : PID controller parameters Kc, Ti and Td in a tuple (Kc, Ti, Td)
     """
 
-    if T1 > 10*T2:
+    if T1 > 5*T2:
         Tc = T1 *gamma
-    elif T2 > 10*T1:
+    elif T2 > 5*T1:
         Tc = T2*gamma
     else :
         Tc = (T1+T2)*gamma
@@ -217,56 +213,92 @@ def IMC_Tuning(Kp, gamma, theta, T1, T2=0, order=2 ):
 
 #     return Gain_margin, Phase_margin
 
-def Margin_error(Process: Process):
 
-    """
-    Computes and displays on a graph the gain and phase margin and analyses the robustness of the PID controller.
-
-    :Process: Process as defined by the class "Process".
-        Use the following command to define the default process which is simply a unit gain process:
-            P = Process({})
-
-    :returns: gain margin and phase margin in a tuple (gm_val, pm_val)
-    """
-    omega = np.logspace(-4, 1, 10000)
-    bode_result = Bode(Process, omega, Show=False)
-
-    gain_linear = np.abs(bode_result)
-    gain_db = 20 * np.log10(gain_linear)
-    phase = np.degrees(np.unwrap(np.angle(bode_result)))
-
-    idx_180 = np.where(np.diff(np.sign(phase + 180)))[0]
+class PID:
     
-    idx_0dB = np.where(np.diff(np.sign(gain_linear - 1)))[0]
+    def __init__(self, parameters):
+        
+        self.parameters = parameters
+        self.parameters['Kc'] = parameters['Kp'] if 'Kp' in parameters else 0
+        self.parameters['Ti'] = parameters['theta'] if 'theta' in parameters else 1
+        self.parameters['Td'] = parameters['Tlead1'] if 'Tlead1' in parameters else 0
+        self.parameters['alpha'] = parameters['Tlead2'] if 'Tlead2' in parameters else 0
 
-    fig, (ax_mag, ax_phase) = plt.subplots(2, 1, figsize=(18, 12), sharex=True)
 
-    ax_mag.semilogx(omega, gain_db, color='blue')
-    ax_mag.axhline(0, color='black', linestyle='--', lw=1)
+def Margin_error(P: Process, C: PID, omega, title =""):
+    s = 1j * omega
+
+    # 1. Calcul du contrôleur C(s)
+    Kc = C.parameters['Kc']
+    Ti = C.parameters['Ti']
+    Td = C.parameters['Td']
+    alpha = C.parameters['alpha']
     
+    Cs_complex = Kc * (1 + 1 / (Ti * s) + (Td * s) / (alpha * Td * s + 1))
+    gain_C_db = 20 * np.log10(np.abs(Cs_complex))
+    phase_C = np.degrees(np.angle(Cs_complex))
+
+    # 2. Calcul du processus P(s)
+    bode_result = Bode(P, omega, Show=False)
+    gain_P_db = 20 * np.log10(np.abs(bode_result))
+    
+    # Correction : On évite l'unwrap infini pour le plot, ou on limite l'axe Y après
+    phase_P = np.degrees(np.unwrap(np.angle(bode_result)))
+
+    # 3. Boucle Ouverte L(s)
+    gain_L_db = gain_P_db + gain_C_db
+    phase_L = phase_P + phase_C
+    gain_L_linear = 10**(gain_L_db / 20)
+
+    # --- Recherche des indices critiques ---
+    # On cherche le croisement à -180
+    idx_180 = np.where(np.diff(np.sign(phase_L + 180)))[0]
+    idx_0dB = np.where(np.diff(np.sign(gain_L_linear - 1)))[0]
+
+    fig, (ax_mag, ax_phase) = plt.subplots(2, 1, figsize=(15, 10), sharex=True)
+
+    fig.suptitle(title, y=0.98)
+   
+
+    # Magnitude Plot
+    ax_mag.semilogx(omega, gain_P_db, 'g--', alpha=0.4, label='P(s)')
+    ax_mag.semilogx(omega, gain_C_db, 'r--', alpha=0.4, label='C(s)')
+    ax_mag.semilogx(omega, gain_L_db, 'b', lw=2, label='L(s) = CP')
+    ax_mag.axhline(0, color='black', label ="1dB", lw=1.5)
+    
+    # Phase Plot
+    ax_phase.semilogx(omega, phase_P, 'g--', alpha=0.4, label='P(s)')
+    ax_phase.semilogx(omega, phase_C, 'r--', alpha=0.4, label='C(s)')
+    ax_phase.semilogx(omega, phase_L, 'orange', lw=2, label = 'L(s) = CP')
+    ax_phase.axhline(-180, color='black',label = "-180° " ,lw=1.5, linestyle='--')
+
+    # --- Marges ---
+    gm_val = np.inf
     if len(idx_180) > 0:
-        w_180 = omega[idx_180[0]]
-        gm_val = -gain_db[idx_180[0]] 
-        ax_mag.annotate('', xy=(w_180, 0), xytext=(w_180, gain_db[idx_180[0]]),
+        idx = idx_180[0] # Premier croisement
+        w_180 = omega[idx]
+        gm_val = -gain_L_db[idx]
+        ax_mag.annotate('', xy=(w_180, 0), xytext=(w_180, gain_L_db[idx]),
                         arrowprops=dict(arrowstyle='<->', color='green', lw=2))
-        ax_mag.text(w_180, gain_db[idx_180[0]]/2, f' gm: {gm_val:.1f} dB', color='green', fontweight='bold')
-    
-    ax_phase.semilogx(omega, phase, color='orange')
-    ax_phase.axhline(-180, color='black', linestyle='--', lw=1)
-    
-    if len(idx_0dB) > 0:
-        w_0dB = omega[idx_0dB[0]]
-        pm_val = phase[idx_0dB[0]] + 180
-        ax_phase.annotate('', xy=(w_0dB, -180), xytext=(w_0dB, phase[idx_0dB[0]]),
-                          arrowprops=dict(arrowstyle='<->', color='red', lw=2))
-        ax_phase.text(w_0dB, (phase[idx_0dB[0]] - 180)/2, f' pm: {pm_val:.1f}°', color='red', fontweight='bold')
-    else:
-        pm_val = np.inf
-        # ax_phase.text(0.1, -10, "Marge de Phase Infinie (Gain < 0dB)", color='red', transform=ax_phase.transAxes)
+        ax_mag.text(w_180, gain_L_db[idx]/2, f' GM: {gm_val:.1f} dB', color='green', weight='bold')
 
-    ax_phase.set_ylim([-270, 0]) 
-    ax_mag.grid(True, which="both")
-    ax_phase.grid(True, which="both")
+    pm_val = np.inf
+    if len(idx_0dB) > 0:
+        idx = idx_0dB[-1] # Dernier croisement (souvent le plus critique)
+        w_0dB = omega[idx]
+        pm_val = phase_L[idx] + 180
+        ax_phase.annotate('', xy=(w_0dB, -180), xytext=(w_0dB, phase_L[idx]),
+                          arrowprops=dict(arrowstyle='<->', color='red', lw=2))
+        ax_phase.text(w_0dB, (phase_L[idx]-180)/2, f' PM: {pm_val:.1f}°', color='red', weight='bold')
+
+    # --- RÉGLAGE CRUCIAL DU ZOOM ---
+    ax_phase.set_ylim([-300, 45]) # On centre sur la zone -180 / 0
+    
+    ax_mag.grid(True, which="both", alpha=0.3)
+    ax_phase.grid(True, which="both", alpha=0.3)
+    ax_mag.legend()
+    ax_phase.legend()
+    plt.tight_layout()
     plt.show()
 
     return gm_val, pm_val
