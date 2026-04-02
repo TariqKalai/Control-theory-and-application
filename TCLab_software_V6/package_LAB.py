@@ -42,13 +42,13 @@ def LL_RT(MV,Kp,Tlead, Tlag, Ts , PV , PVInit=0,method='EBD'):
 
 
         elif method == 'TRAP':
-            PV.append(PV[-1]*((2-K)/(2+K)) + ((Kp*K)/(2+K)) * ((2*(Tlead/Ts)+1)*MV[-1] - 2*(Tlead/Ts)*MV[-2] + MV[-2] ))   
+            PV.append(PV[-1]*((2-K)/(2+K)) + ((Kp*K)/(2+K)) * (((2*Tlead/Ts)+1)*MV[-1] + (1-(2*Tlead/Ts) )*MV[-2]))
 
         else: #default : EBD
             PV.append((1/(1+K))*PV[-1] + (K*Kp/(1+K))*(((1+ (Tlead/Ts) )*MV[-1] )- ((Tlead/Ts)*MV[-2])) )
    
 
-def PID_RT(SP, PV, Man, MVMan, MVFF, Kc, Ti, Td, alpha, Ts, MVMin, MVMax, MV, MVP, MVI, MVD, E , ManFF = False, PVinit=0, method="EBD"):
+def PID_RT(SP, PV, Man, MVMan, MVFF, Kc, Ti, Td, alpha, Ts, MVMin, MVMax, MV, MVP, MVI, MVD, E , ManFF = False, PVinit=0, method="EBD-EBD"):
 
     """
     The function "PID_RT" needs to be included in a "for or while loop".
@@ -73,15 +73,17 @@ def PID_RT(SP, PV, Man, MVMan, MVFF, Kc, Ti, Td, alpha, Ts, MVMin, MVMax, MV, MV
     :ManFF: FF in Manual Mode (optional: default boolean value is False)
     :PVinit: Initial value for PV (optional: default value is 0)
     :method: discretisation method (optional: default value is 'EBD')
-        EBD: Euler Backward difference
-        EFD: Euler Forward difference
-        TRAP: Trapezoïdal method
+    - EBD-EBD: EBD for integral action and EBD for derivative action 
+    - EBD-TRAP: EBD for integral action and TRAP for derivative action 
+    - TRAP-EBD: TRAP for integral action and EBD for derivative action 
+    - TRAP-TRAP: TRAP for integral action and TRAP for derivative action
+
     The function "PID_RT" appends new values to the vectors "MV", "MVP", "MVI", and "MVD".
     The appended values are based on the PID algorithm, the controller mode, and feedforward.
     The saturation of "MV" is implemented with anti wind-up. 
     """
 
-
+    method_I, method_D= method.split('-')
     # initialisation de E 
 
     if len(PV) == 0 :
@@ -94,26 +96,50 @@ def PID_RT(SP, PV, Man, MVMan, MVFF, Kc, Ti, Td, alpha, Ts, MVMin, MVMax, MV, MV
     MVP.append(Kc*E[-1])
 
     # Partie MV intergal
-    if len(MVI) == 0:
-        MVI.append(Kc*(Ts/Ti)*E[-1])
-    else:
-        MVI.append(MVI[-1] + Kc*(Ts/Ti)*E[-1])
+    if method_I == 'TRAP' : 
+        if len(MVI) == 0 :
+            MVI.append(0.5*Kc*Ts/Ti * (E[-1]))
+        else : 
+            MVI.append(MVI[-1] + 0.5*Kc*Ts/Ti * (E[-1] + E[-2]))
+    else :
+        if len(MVI) == 0 :
+            MVI.append((Kc*(Ts/Ti))*E[-1])
+        else : 
+            MVI.append(MVI[-1] + (Kc*Ts/Ti)*E[-1])
 
 
     # Partie MV derivée
     TFD = Td * alpha
     if len(MVD) != 0:
-        if len(E) == 1 :
-            MVD.append( (((TFD)/(TFD+Ts)) * MVD [-1] ) + ((Kc*Td)/(TFD+Ts))*(E[-1])) 
+        if method_D =="EBD" : 
+            if len(E) == 1 :
+            #elif car au debut on peut pas aller chercher des erreurs qui n'existe pas
+                MVD.append( (((TFD)/(TFD+Ts)) * MVD [-1] ) + ((Kc*Td)/(TFD+Ts))*(E[-1])) 
+            else :
+                MVD.append( (((TFD)/(TFD+Ts)) * MVD [-1] ) + ((Kc*Td)/(TFD+Ts))*(E[-1] - E[-2]))
         else :
-            MVD.append( (((TFD)/(TFD+Ts)) * MVD [-1] ) + ((Kc*Td)/(TFD+Ts))*(E[-1] - E[-2]))
-    else :
-        if len(E) == 1 :
-            MVD.append(  ((Kc*Td)/(TFD+Ts))*(E[-1])) 
-        else :
-            MVD.append(  ((Kc*Td)/(TFD+Ts))*(E[-1] - E[-2]))
+            if len(E) == 1 : 
+                MVD.append(((TFD-Ts/2)/(TFD+Ts/2))*MVD[-1] + ((Kc*Td)/(TFD + Ts/2))*(E[-1]))
+            else :
+                MVD.append(((TFD-Ts/2)/(TFD+Ts/2))*MVD[-1] + ((Kc*Td)/(TFD + Ts/2))*(E[-1]- E[-2]))
 
-## pas normal j comprend pas ce qu il se passe MVFF ne change pas grand chose, mais MVMan n est pas respecté? 
+    else :
+        if method_D =="EBD" : 
+            if len(E) == 1 :
+                MVD.append( ((Kc*Td)/(TFD+Ts))*(E[-1])) 
+            else :
+                MVD.append( ((Kc*Td)/(TFD+Ts))*(E[-1] - E[-2]))
+
+
+        else :
+            if len(E) == 1 :
+                MVD.append(((Kc*Td)/(TFD + Ts/2))*(E[-1]))
+            else : 
+                MVD.append(((Kc*Td)/(TFD + Ts/2))*(E[-1]- E[-2]))
+
+    # anti Wind up
+
+    # mode manuel
     if Man[-1] == True :
         if ManFF :
             MVI[-1] = MVMan[-1] - MVP[-1] - MVD[-1]
@@ -125,6 +151,7 @@ def PID_RT(SP, PV, Man, MVMan, MVFF, Kc, Ti, Td, alpha, Ts, MVMin, MVMax, MV, MV
 
     MV.append( MVD[-1] +MVI[-1] + MVP[-1] + MVFF[-1])
 
+    #Saturation
     if MV[-1] > MVMax :
 
         MVI[-1] = MVMax - MVP[-1] - MVD[-1] - MVFF [-1]
@@ -177,43 +204,6 @@ def IMC_Tuning(Kp, gamma, theta, T1, T2=0, order=2 ):
 
         return (Kc, Ti, Td)
     
-
-# def Margin_error(Process : Process):
-
-#     """
-#     Computes the gain and phase margin and analyses the robustness of the PID controller.
-
-#     :Process: Process as defined by the class "Process".
-#         Use the following command to define the default process which is simply a unit gain process:
-#             P = Process({})
-#     """
-
-#     omega = np.logspace(-4, 1, 10000)
-#     bode_result = Bode(Process, omega, Show=False)
-
-#     gain = np.abs(bode_result)
-#     phase = np.degrees(np.unwrap(np.angle(bode_result)))
-
-#     # Gain margin
-#     if np.min(phase) > -180:
-#         Gain_margin = np.inf
-#     else:
-#         index_GainMargin = np.argmin(np.abs(phase + 180))
-        
-#         # Formule : GM = 1/Gain au croisement, converti en dB
-#         Gain_margin = 20 * np.log10(1 / gain[index_GainMargin])
-    
-#     # Phase margin 
-#     if np.max(gain) < 1:
-#         Phase_margin = np.inf
-#     else:
-#         index_PhaseMargin = np.argmin(np.abs(gain - 1))
-#         # Formule : Distance entre la phase et -180°
-#         Phase_margin = phase[index_PhaseMargin] + 180
-
-#     return Gain_margin, Phase_margin
-
-
 class PID:
     
     def __init__(self, parameters):
@@ -226,6 +216,37 @@ class PID:
 
 
 def Margin_error(P: Process, C: PID, omega, title =""):
+    """
+    The function "Margin_error" computes and plots the Bode diagram of the
+    open-loop transfer function L(s) = C(s) * P(s) and returns the gain
+    and phase margins.
+
+    :P: Process object containing the process transfer function parameters imported from package DBR
+    :C: PID object containing the controller parameters:
+        - Kc   : controller gain
+        - Ti   : integral time constant [s]
+        - Td   : derivative time constant [s]
+        - alpha: derivative filter coefficient
+    :omega: frequency vector [rad/s] over which the Bode diagram is computed
+    :title: (optional: default value is "")
+        title of the Bode diagram figure
+
+    The function "Margin_error" returns:
+        :gm_val: gain margin [dB]
+            Amount of gain increase required to make the open-loop gain
+            equal to 0 dB at the -180° phase crossing frequency.
+            Returns np.inf if no -180° phase crossing is found.
+        :pm_val: phase margin [°]
+            Amount of additional phase lag required to bring the phase
+            to -180° at the 0 dB gain crossover frequency.
+            Returns np.inf if no 0 dB gain crossing is found.
+
+    The function also displays a two-panel Bode plot showing:
+        - Magnitude [dB] vs frequency for P(s), C(s) and L(s)
+        - Phase [°] vs frequency for P(s), C(s) and L(s)
+        - Gain margin annotated on the magnitude plot (green arrow)
+        - Phase margin annotated on the phase plot (red arrow)
+    """
     s = 1j * omega
 
     # 1. Calcul du contrôleur C(s)
